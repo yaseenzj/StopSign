@@ -5,8 +5,8 @@
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <style>
-        body { margin: 0; padding: 0; font-family: 'Segoe UI', sans-serif; }
-        #map { height: 100vh; width: 100%; background: #aad3df; }
+        body { margin: 0; padding: 0; font-family: 'Segoe UI', sans-serif; overflow: hidden; }
+        #map { height: 100vh; width: 100vw; background: #aad3df; position: absolute; top: 0; left: 0; z-index: 1; }
         
         .dashboard {
             position: absolute; top: 20px; right: 20px;
@@ -30,20 +30,48 @@
             font-weight: bold; cursor: pointer; margin-top: 10px;
         }
         
+        .btn-radar {
+            width: 100%; padding: 12px; background: #8e44ad; 
+            color: white; border: none; border-radius: 8px; 
+            font-weight: bold; cursor: pointer; margin-top: 10px;
+            transition: 0.3s;
+        }
+        .btn-radar:hover { background: #9b59b6; }
+        
         .ai-badge {
             font-size: 10px; background: #34495e; color: white;
             padding: 2px 6px; border-radius: 4px; float: right;
+        }
+
+        #radar-container {
+            display: none; position: absolute; top: 0; left: 0; 
+            width: 100vw; height: 100vh; z-index: 500;
+        }
+
+        #radar-controls {
+            display: none; margin-top: 10px;
+        }
+        
+        select {
+            width: 100%; padding: 10px; border-radius: 8px; border: 1px solid #ccc;
+            font-weight: bold; color: #2c3e50; cursor: pointer;
         }
     </style>
 </head>
 <body>
 
+    <div id="map"></div>
+
+    <div id="radar-container">
+        <iframe id="windy-iframe" width="100%" height="100%" src="https://embed.windy.com/embed.html?type=map&location=coordinates&metricRain=mm&metricTemp=°C&metricWind=km/h&zoom=10&overlay=wind&product=ecmwf&level=surface&lat=12.9141&lon=74.8560" frameborder="0"></iframe>
+    </div>
+
     <div class="dashboard">
-        <span class="ai-badge">RANDOM FOREST 95%</span>
+        <span class="ai-badge">AI ACTIVE</span>
         <h3 style="margin:0; color:#2c3e50;">Marine Safety Hub</h3>
-        <p style="font-size: 12px; color: #888;">Live AI Risk Assessment (Pavoor)</p>
+        <p style="font-size: 12px; color: #888;">Live AI Risk Assessment</p>
         
-        <div id="risk-indicator">CLICK MAP TO ANALYZE</div>
+        <div id="risk-indicator">LOCATING YOU...</div>
         
         <div id="stats">
             <div class="data-row"><span class="label">Wind Speed:</span> <span id="wind" class="value">-</span></div>
@@ -52,24 +80,52 @@
         </div>
 
         <button class="btn-start" onclick="startTrip()">Plan Safe Trip</button>
+        <button id="btn-radar" class="btn-radar" onclick="toggleRadar()">📡 Open Live Radar</button>
+
+        <div id="radar-controls">
+            <select id="layer-select" onchange="changeLayer()">
+                <option value="wind">🌬️ Wind Animation</option>
+                <option value="waves">🌊 Wave Height</option>
+                <option value="rain">🌧️ Rain & Thunder</option>
+            </select>
+        </div>
     </div>
 
-    <div id="map"></div>
-
     <script>
-        // 1. Setup Map centered on Mangalore
+        // 1. Setup Map with a default starting point (Mangalore)
         var map = L.map('map').setView([12.9141, 74.8560], 11);
 
-        // 2. Load Visuals (Reliable Japan-based Mirror for OSM)
-        L.tileLayer('https://tile.openstreetmap.jp/{z}/{x}/{y}.png', {
-            attribution: '&copy; OpenStreetMap'
+        // 2. Load Visuals (NEW RELIABLE GLOBAL SERVER)
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '&copy; OpenStreetMap contributors'
         }).addTo(map);
-        
-        // 3. Add Nautical Markers
         L.tileLayer('http://tiles.openseamap.org/seamark/{z}/{x}/{y}.png').addTo(map);
 
         var marker;
 
+        // --- AUTOMATIC LOCATION TRACKER ---
+        map.locate({setView: true, maxZoom: 12});
+
+        map.on('locationfound', function(e) {
+            if (marker) map.removeLayer(marker);
+            marker = L.marker(e.latlng).addTo(map);
+            marker.bindPopup("📍 Your Current Location").openPopup();
+            updateRisk(e.latlng.lat, e.latlng.lng);
+        });
+
+        map.on('locationerror', function(e) {
+            document.getElementById('risk-indicator').innerHTML = "CLICK MAP TO ANALYZE";
+            console.log("Location access denied. Waiting for manual click.");
+        });
+
+        // --- MANUAL CLICK HANDLER ---
+        map.on('click', function(e) {
+            if (marker) map.removeLayer(marker);
+            marker = L.marker(e.latlng).addTo(map);
+            updateRisk(e.latlng.lat, e.latlng.lng);
+        });
+
+        // --- THE AI RISK ENGINE ---
         async function updateRisk(lat, lng) {
             const riskBox = document.getElementById('risk-indicator');
             const windVal = document.getElementById('wind');
@@ -81,7 +137,7 @@
             riskBox.style.color = "white";
 
             try {
-                // A. Fetch Weather & Marine Data
+                // A. Fetch Weather Data
                 const weatherUrl = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}&current=wind_speed_10m,precipitation&timezone=Asia%2FKolkata`;
                 const marineUrl = `https://marine-api.open-meteo.com/v1/marine?latitude=${lat}&longitude=${lng}&current=wave_height,wave_period&timezone=Asia%2FKolkata`;
 
@@ -93,12 +149,11 @@
                 const rain = wData.current.precipitation;
                 const wave = mData.current.wave_height || 0;
 
-                // Update UI Labels
                 windVal.innerText = wind + " km/h";
                 rainVal.innerText = rain + " mm";
                 waveVal.innerText = wave + " m";
 
-                // B. Send Data to YOUR Local AI Backend
+                // B. Send Data to Python Server
                 const aiResponse = await fetch('http://127.0.0.1:8000/api/v1/risk-check', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -111,7 +166,7 @@
 
                 const aiResult = await aiResponse.json();
 
-                // C. Update UI with AI's Decision
+                // C. Show AI Decision
                 riskBox.innerHTML = `⚠️ ${aiResult.risk_level}: ${aiResult.confidence}% SURE`;
                 
                 if (aiResult.risk_level === "RED") {
@@ -132,22 +187,42 @@
             }
         }
 
-        // Click Handler
-        map.on('click', function(e) {
-            if (marker) map.removeLayer(marker);
-            marker = L.marker(e.latlng).addTo(map);
-            updateRisk(e.latlng.lat, e.latlng.lng);
-        });
-
+        // --- BUTTON ACTIONS ---
         function startTrip() {
             const riskText = document.getElementById('risk-indicator').innerText;
             if(riskText.includes("RED")) {
                 alert("⛔ TRIP BLOCKED: AI detects severe safety risk.");
-            } else if(riskText.includes("CLICK")) {
-                alert("Please select a destination on the map first.");
+            } else if(riskText.includes("CLICK") || riskText.includes("LOCATING")) {
+                alert("Please wait for location or click the map first.");
             } else {
                 alert("🚀 Trip Registered. Monitoring active for your safety.");
             }
+        }
+
+        function toggleRadar() {
+            const radar = document.getElementById('radar-container');
+            const controls = document.getElementById('radar-controls');
+            const btn = document.getElementById('btn-radar');
+
+            if (radar.style.display === "none" || radar.style.display === "") {
+                radar.style.display = "block";
+                controls.style.display = "block";
+                btn.innerHTML = "❌ Close Radar";
+                btn.style.background = "#e74c3c"; // Turns red to indicate closing
+            } else {
+                radar.style.display = "none";
+                controls.style.display = "none";
+                btn.innerHTML = "📡 Open Live Radar";
+                btn.style.background = "#8e44ad"; // Turns back to purple
+            }
+        }
+
+        function changeLayer() {
+            const layer = document.getElementById('layer-select').value;
+            const iframe = document.getElementById('windy-iframe');
+            
+            // This updates the URL to switch between wind, rain, and waves
+            iframe.src = `https://embed.windy.com/embed.html?type=map&location=coordinates&metricRain=mm&metricTemp=°C&metricWind=km/h&zoom=10&overlay=${layer}&product=ecmwf&level=surface&lat=12.9141&lon=74.8560`;
         }
     </script>
 </body>
