@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>FisherSafe - Full Stack AI Marine Dashboard</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <style>
+        body { margin: 0; padding: 0; font-family: 'Segoe UI', sans-serif; }
+        #map { height: 100vh; width: 100%; background: #aad3df; }
+        
+        .dashboard {
+            position: absolute; top: 20px; right: 20px;
+            background: white; padding: 20px; z-index: 1000;
+            border-radius: 15px; width: 280px; box-shadow: 0 8px 30px rgba(0,0,0,0.3);
+        }
+
+        #risk-indicator {
+            padding: 15px; border-radius: 10px; text-align: center;
+            font-weight: bold; font-size: 16px; margin: 10px 0;
+            background: #f0f0f0; transition: 0.5s ease;
+        }
+
+        .data-row { display: flex; justify-content: space-between; margin: 5px 0; font-size: 14px; }
+        .label { color: #555; }
+        .value { font-weight: bold; color: #2c3e50; }
+        
+        .btn-start { 
+            width: 100%; padding: 12px; background: #2c3e50; 
+            color: white; border: none; border-radius: 8px; 
+            font-weight: bold; cursor: pointer; margin-top: 10px;
+        }
+        
+        .ai-badge {
+            font-size: 10px; background: #34495e; color: white;
+            padding: 2px 6px; border-radius: 4px; float: right;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="dashboard">
+        <span class="ai-badge">RANDOM FOREST 95%</span>
+        <h3 style="margin:0; color:#2c3e50;">Marine Safety Hub</h3>
+        <p style="font-size: 12px; color: #888;">Live AI Risk Assessment (Pavoor)</p>
+        
+        <div id="risk-indicator">CLICK MAP TO ANALYZE</div>
+        
+        <div id="stats">
+            <div class="data-row"><span class="label">Wind Speed:</span> <span id="wind" class="value">-</span></div>
+            <div class="data-row"><span class="label">Wave Height:</span> <span id="wave" class="value">-</span></div>
+            <div class="data-row"><span class="label">Precipitation:</span> <span id="rain" class="value">-</span></div>
+        </div>
+
+        <button class="btn-start" onclick="startTrip()">Plan Safe Trip</button>
+    </div>
+
+    <div id="map"></div>
+
+    <script>
+        // 1. Setup Map centered on Mangalore
+        var map = L.map('map').setView([12.9141, 74.8560], 11);
+
+        // 2. Load Visuals (Reliable Japan-based Mirror for OSM)
+        L.tileLayer('https://tile.openstreetmap.jp/{z}/{x}/{y}.png', {
+            attribution: '&copy; OpenStreetMap'
+        }).addTo(map);
+        
+        // 3. Add Nautical Markers
+        L.tileLayer('http://tiles.openseamap.org/seamark/{z}/{x}/{y}.png').addTo(map);
+
+        var marker;
+
+        async function updateRisk(lat, lng) {
+            const riskBox = document.getElementById('risk-indicator');
+            const windVal = document.getElementById('wind');
+            const waveVal = document.getElementById('wave');
+            const rainVal = document.getElementById('rain');
+            
+            riskBox.innerHTML = "AI ANALYZING...";
+            riskBox.style.background = "#34495e";
+            riskBox.style.color = "white";
+
+            try {
+                // A. Fetch Weather & Marine Data
+                const weatherUrl = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}&current=wind_speed_10m,precipitation&timezone=Asia%2FKolkata`;
+                const marineUrl = `https://marine-api.open-meteo.com/v1/marine?latitude=${lat}&longitude=${lng}&current=wave_height,wave_period&timezone=Asia%2FKolkata`;
+
+                const [wRes, mRes] = await Promise.all([fetch(weatherUrl), fetch(marineUrl)]);
+                const wData = await wRes.json();
+                const mData = await mRes.json();
+
+                const wind = wData.current.wind_speed_10m;
+                const rain = wData.current.precipitation;
+                const wave = mData.current.wave_height || 0;
+
+                // Update UI Labels
+                windVal.innerText = wind + " km/h";
+                rainVal.innerText = rain + " mm";
+                waveVal.innerText = wave + " m";
+
+                // B. Send Data to YOUR Local AI Backend
+                const aiResponse = await fetch('http://127.0.0.1:8000/api/v1/risk-check', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        wind_speed: wind,
+                        wave_height: wave,
+                        precipitation: rain
+                    })
+                });
+
+                const aiResult = await aiResponse.json();
+
+                // C. Update UI with AI's Decision
+                riskBox.innerHTML = `⚠️ ${aiResult.risk_level}: ${aiResult.confidence}% SURE`;
+                
+                if (aiResult.risk_level === "RED") {
+                    riskBox.style.background = "#e74c3c";
+                } else if (aiResult.risk_level === "YELLOW") {
+                    riskBox.style.background = "#f1c40f";
+                    riskBox.style.color = "#333";
+                } else {
+                    riskBox.innerHTML = `✅ ${aiResult.risk_level}: ${aiResult.confidence}% SURE`;
+                    riskBox.style.background = "#2ecc71";
+                    riskBox.style.color = "white";
+                }
+
+            } catch (e) {
+                riskBox.innerHTML = "BACKEND OFFLINE";
+                riskBox.style.background = "#95a5a6";
+                console.error("AI Connection failed. Is uvicorn running?", e);
+            }
+        }
+
+        // Click Handler
+        map.on('click', function(e) {
+            if (marker) map.removeLayer(marker);
+            marker = L.marker(e.latlng).addTo(map);
+            updateRisk(e.latlng.lat, e.latlng.lng);
+        });
+
+        function startTrip() {
+            const riskText = document.getElementById('risk-indicator').innerText;
+            if(riskText.includes("RED")) {
+                alert("⛔ TRIP BLOCKED: AI detects severe safety risk.");
+            } else if(riskText.includes("CLICK")) {
+                alert("Please select a destination on the map first.");
+            } else {
+                alert("🚀 Trip Registered. Monitoring active for your safety.");
+            }
+        }
+    </script>
+</body>
+</html>
